@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>個人天氣儀表板</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        :root {
+            --glass: rgba(255, 255, 255, 0.12);
+            --glass-border: rgba(255, 255, 255, 0.2);
+            --accent: #4facfe;
+            --quote-bg: linear-gradient(135deg, rgba(255, 209, 109, 0.25), rgba(255, 140, 0, 0.15));
+            --weather-bg: linear-gradient(135deg, rgba(79, 172, 254, 0.3), rgba(0, 82, 212, 0.2));
+        }
+
+        body {
+            margin: 0; min-height: 100vh; color: white;
+            font-family: "PingFang TC", "Microsoft JhengHei", sans-serif;
+            /* 預設背景色 */
+            background: linear-gradient(135deg, #2c3e50, #000000); 
+            background-attachment: fixed;
+            transition: background 1.5s ease;
+            overflow-x: hidden;
+        }
+
+        .bg-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.2); z-index: 0; }
+        .main-dashboard { position: relative; z-index: 1; max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .search-section { display: flex; gap: 8px; }
+
+        input { background: rgba(255, 255, 255, 0.2); border: 1px solid var(--glass-border); padding: 8px 12px; border-radius: 10px; color: white; outline: none; width: 200px; }
+        button { background: var(--accent); border: none; padding: 0 20px; border-radius: 10px; color: white; cursor: pointer; font-weight: bold; }
+
+        .three-columns { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; }
+        .glass-card { background: var(--glass); backdrop-filter: blur(15px); border: 1px solid var(--glass-border); border-radius: 20px; padding: 20px; margin-bottom: 15px; }
+        .quote-card { background: var(--quote-bg); border-color: rgba(255, 209, 109, 0.3); text-align: left; }
+        .weather-info-card { background: var(--weather-bg); border-color: rgba(79, 172, 254, 0.3); }
+
+        .temp-big { font-size: 4rem; font-weight: bold; margin: 10px 0; }
+        .label { border-left: 4px solid var(--accent); padding-left: 10px; font-size: 0.9rem; margin-bottom: 15px; opacity: 0.8; }
+        #map { height: 180px; border-radius: 12px; z-index: 5; }
+
+        .uv-gauge-container { position: relative; margin: 40px 0 10px; }
+        .uv-bar { height: 8px; width: 100%; border-radius: 4px; background: linear-gradient(to right, #289500, #f7e400, #f85900, #d80010, #6b49c8); }
+        .uv-arrow { position: absolute; top: -35px; left: 0%; transform: translateX(-50%); transition: left 1s ease; text-align: center; }
+        .uv-arrow-num { font-weight: 900; font-size: 1.2rem; }
+
+        .week-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.1); }
+        .rain-pop { color: #4facfe; font-size: 0.85rem; font-weight: bold; width: 65px; text-align: right; white-space: nowrap; }
+        
+        .news-link { text-decoration: none; color: white; display: block; border-radius: 12px; overflow: hidden; }
+        .news-img { width: 100%; height: 100px; object-fit: cover; }
+        .news-overlay { background: rgba(0,0,0,0.5); padding: 8px; font-size: 0.8rem; text-align: center; }
+
+        @media (max-width: 900px) { .three-columns { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+
+<div class="bg-overlay"></div>
+
+<div class="main-dashboard">
+    <div class="top-bar">
+        <div class="search-section">
+            <input type="text" id="cityInput" placeholder="搜尋城市..." spellcheck="false">
+            <button id="searchBtn">搜尋</button>
+        </div>
+        <div id="todayDate">載入中...</div>
+    </div>
+
+    <div class="three-columns">
+        <div class="column">
+            <div class="glass-card quote-card">
+                <div id="quoteText" style="font-size: 1.1rem; margin-bottom: 12px; line-height: 1.4; text-align: center;">「載入名句中...」</div>
+                <div id="quoteAuthor" style="font-size: 0.9rem; opacity: 0.8; text-align: right; margin-top: 5px;"></div>
+            </div>
+            <div class="glass-card weather-info-card">
+                <h1 id="cityName" style="margin: 0;">--</h1>
+                <div class="temp-big"><span id="currentTemp">--</span>°C</div>
+                <p id="weatherDesc">--</p>
+                <div>降雨量: <span id="rainVal">0</span> mm</div>
+            </div>
+            <div class="glass-card">
+                <h3 class="label">24小時氣溫趨勢</h3>
+                <div style="height:180px;"><canvas id="tempChart"></canvas></div>
+            </div>
+        </div>
+
+        <div class="column">
+            <div class="glass-card">
+                <h3 class="label">未來一周天氣</h3>
+                <div id="weeklyForecast"></div>
+            </div>
+            <div class="glass-card"><h3 class="label">衛星地圖</h3><div id="map"></div></div>
+        </div>
+
+        <div class="column">
+            <div class="glass-card">
+                <h3 class="label">環境指數</h3>
+                <div>體感溫度 <span id="feelsTemp">--</span>°C</div>
+                <div id="tempAdvice" style="font-size:0.9rem; margin:10px 0; opacity:0.8;"></div>
+                <hr style="border:none; border-top:1px solid rgba(255,255,255,0.1); margin:15px 0;">
+                <div class="uv-section">
+                    <div style="font-size: 0.85rem; opacity: 0.8;">紫外線指數</div>
+                    <div class="uv-gauge-container">
+                        <div id="uvArrow" class="uv-arrow">
+                            <div class="uv-arrow-num" id="uvNumber">0</div>
+                            <div>▼</div>
+                        </div>
+                        <div class="uv-bar"></div>
+                    </div>
+                    <div id="uvAdvice" style="font-size:0.9rem; font-weight:bold; text-align:center;"></div>
+                </div>
+            </div>
+            <div class="glass-card">
+                <h3 class="label">今日焦點新聞</h3>
+                <div id="newsContainer"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+const API_KEY = "bd5e378503939ddaee76f12ad7a97608";
+const BASE_URL = "https://api.openweathermap.org/data/2.5/";
+let map, tempChart, isComposing = false;
+
+const quotes = [
+    { text: "天才是百分之一的靈感加百分之九十九的汗水。", author: "愛迪生" },
+    { text: "一個人幾乎可以在任何他懷有無限熱忱的事情上成功。", author: "查爾斯·史考伯" },
+    { text: "深窺自己的心，而後發覺一切的奇蹟在你自己。", author: "培根" },
+    { text: "堅強的信念能贏得強者的心，並使他們變得更堅強。", author: "白哲特" },
+    { text: "流水在碰到底處時才會釋放活力。", author: "歌德" },
+    { text: "那腦袋裡的智慧，就像打火石里的火花一樣，不去打它是不肯出來的。", author: "莎士比亞" },
+    { text: "多數人都擁有自己不了解的能力和機會，都有可能做到未曾夢想的事情。", author: "戴爾·卡耐基" },
+    { text: "勿問成功的秘訣為何，且盡全力做你應該做的事吧。", author: "美華納" },
+    { text: "苦難有如烏雲，遠望去見墨黑一片，然而身臨其下時不過是灰色而已。", author: "里希特" },
+    { text: "幸運並非沒有恐懼和煩惱；厄運也決非沒有安慰和希望。", author: "培根" },
+    { text: "不幸可能成為通向幸福的橋樑。", author: "日本諺語" },
+    { text: "苦難磨鍊一些人，也毀滅另一些人。", author: "富勒" },
+    { text: "烈火試真金，逆境試強者。", author: "塞內加" },
+    { text: "人生猶如一本書，聰明人細細閱讀。因為他們只能讀它一次。", author: "保羅" },
+    { text: "過去屬於死神，未來屬於你自己。", author: "雪萊" },
+    { text: "不要慨嘆生活的痛苦！慨嘆是弱者。", author: "高爾基" },
+    { text: "不應當急於求成，應當去熟悉自己的研究對象，鍥而不捨。", author: "莎士比亞" },
+    { text: "如煙往事俱忘卻，心底無私天地寬。", author: "陶鑄" },
+    { text: "生活真象這杯濃酒，不經提煉呵，就不會這樣可口！", author: "郭小川" },
+    { text: "人生的價值，即以其人對於當代所做的工作為尺度。", author: "徐瑋" },
+    { text: "逆境給人寶貴的磨鍊機會。只有經得起環境考驗的人，才能算是強者。", author: "松下幸之助" },
+    { text: "路是腳踏出來的，歷史是人寫出來的。", author: "吉鴻昌" },
+    { text: "真正的人生，只有在經過艱難卓絕的鬥爭之後才能實現。", author: "塞涅卡" },
+    { text: "當一個人用工作去迎接光明，光明很快就會來照耀著他。", author: "馮學峰" },
+    { text: "人在身處逆境時，適應環境的能力實在驚人。", author: "卡耐基" },
+    { text: "倘若你想達成目標，便得在心中描繪出目標達成後的景象。", author: "理查丹尼" },
+    { text: "我們必須經常描繪自己將來的幸福形象，並依靠潛意識實現。", author: "喬瑟夫·摩菲" },
+    { text: "只要能發掘出這項秘藏的能力，人類的能力將會完全大改觀。", author: "七田真" },
+    { text: "我這一生不曾工作過，我的著作都來自於潛意識的寶藏。", author: "馬克吐溫" },
+    { text: "那些最能幹的人，往往是即使在最絕望環境裡仍傳送成功意念的人。", author: "安東尼·羅賓" },
+    { text: "靈感並不是在邏輯思考的延長線上產生。", author: "愛因斯坦" },
+    { text: "真正的強者，善於從順境中找到陰影，從逆境中找到光亮。", author: "易卜生" },
+    { text: "每一種挫折或不利的突變，是帶著同樣或較大的有利的種子。", author: "愛默生" },
+    { text: "什麼叫做失敗？失敗是到達較佳境地的第一步。", author: "菲里浦斯" },
+    { text: "失敗是堅忍的最後考驗。", author: "俾斯麥" },
+    { text: "對於不屈不撓的人來說，沒有失敗這回事。", author: "俾斯麥" },
+    { text: "一次失敗，只是證明我們成功的決心還夠堅強。", author: "博維" },
+    { text: "失敗也是我需要的，它和成功對我一樣有價值。", author: "愛迪生" },
+    { text: "我們關心的，不是你是否失敗了，而是你對失敗能否無怨。", author: "林肯" },
+    { text: "沒有人事先了解自己到底有多大的力量，直到他試過以後才知道。", author: "歌德" },
+    { text: "要成功不需要什麼特別的才能，只要把小事做得好就行了。", author: "維龍" },
+    { text: "成功的唯一秘訣——堅持最後一分鐘。", author: "柏拉圖" },
+    { text: "只有勝利才能生存，只有成功才有代價。", author: "佚名" },
+    { text: "只有把抱怨環境的心情，化為上進的力量，才是成功的保證。", author: "羅曼·羅蘭" },
+    { text: "勝利者往往是從堅持最後五分鐘的時間中得來成功。", author: "牛頓" },
+    { text: "跌倒了，爬起來，這就是成功。", author: "牛頓" },
+    { text: "本來無望的事，大膽嘗試，往往能成功。", author: "莎士比亞" }
+];
+
+const cityInput = document.getElementById("cityInput");
+cityInput.addEventListener('compositionstart', () => isComposing = true);
+cityInput.addEventListener('compositionend', () => isComposing = false);
+cityInput.addEventListener('keydown', (e) => { if (e.key === "Enter" && !isComposing) performSearch(); });
+document.getElementById("searchBtn").onclick = performSearch;
+
+async function performSearch() {
+    let query = cityInput.value.trim();
+    if (!query) return;
+    try {
+        const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`);
+        const geoData = await geoRes.json();
+        if (geoData && geoData.length > 0) fetchAllData(geoData[0].lat, geoData[0].lon, query);
+    } catch (err) { console.error(err); }
+}
+
+async function fetchAllData(lat, lon, name) {
+    const res = await fetch(`${BASE_URL}weather?lat=${lat}&lon=${lon}&units=metric&lang=zh_tw&appid=${API_KEY}`);
+    const data = await res.json();
+    const fRes = await fetch(`${BASE_URL}forecast?lat=${lat}&lon=${lon}&units=metric&lang=zh_tw&appid=${API_KEY}`);
+    const fData = await fRes.json();
+    const uvRes = await fetch(`${BASE_URL}uvi?lat=${lat}&lon=${lon}&appid=${API_KEY}`);
+    const uvData = await uvRes.json();
+    updateUI(data, name, fData.list, uvData.value);
+}
+
+function updateUI(data, customName, forecastList, uvi) {
+    document.getElementById("cityName").innerText = customName || data.name;
+    document.getElementById("currentTemp").innerText = Math.round(data.main.temp);
+    document.getElementById("weatherDesc").innerText = data.weather[0].description;
+    document.getElementById("todayDate").innerText = new Date().toLocaleTimeString('zh-TW', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + " 更新";
+    
+    const rain = data.rain ? (data.rain['1h'] || data.rain['3h'] || 0) : 0;
+    document.getElementById("rainVal").innerText = rain;
+    document.getElementById("feelsTemp").innerText = Math.round(data.main.feels_like);
+    document.getElementById("tempAdvice").innerText = data.main.feels_like <= 18 ? "❄️ 體感偏涼，注意保暖。" : "👓 體感舒適，適合外出。";
+
+    document.getElementById("uvNumber").innerText = uvi.toFixed(1);
+    document.getElementById("uvArrow").style.left = `${Math.min((uvi/11)*100, 100)}%`;
+    
+    let uvTip = "";
+    if (uvi < 3) uvTip = "🌻 陽光很溫柔，放心去散步吧！";
+    else if (uvi < 6) uvTip = "☀️ 陽光有點熱情，記得戴個帽子喔！";
+    else if (uvi < 8) uvTip = "🕶️ 紫外線有點兇，防曬霜塗好塗滿！";
+    else if (uvi < 11) uvTip = "🔥 太陽在開派對，不想變黑炭就待在室內！";
+    else uvTip = "🚀 太陽輻射爆表！這是火星等級，沒事別出門！";
+    document.getElementById("uvAdvice").innerText = uvTip;
+
+    updateMap(data.coord.lat, data.coord.lon);
+    updateWeatherBg(data.weather[0].main); // 更新固定背景色
+    updateNews(customName || data.name);
+
+    const q = quotes[Math.floor(Math.random() * quotes.length)];
+    document.getElementById("quoteText").innerText = `「${q.text}」`;
+    document.getElementById("quoteAuthor").innerText = `— ${q.author}`;
+
+    updateChart(forecastList);
+    renderWeekly(forecastList);
+}
+
+function updateWeatherBg(main) {
+    // 根據天氣狀態切換固定漸層背景，簡約且穩定
+    const bgConfigs = {
+        // 晴天：使用溫暖的日曬感橙黃漸層
+        Clear: "linear-gradient(135deg, #FFD166, #FF8C00)",
+        // 多雲：灰藍色的沉穩感
+        Clouds: "linear-gradient(135deg, #757F9A, #243B55)",
+        // 雨天：較深的冷色調
+        Rain: "linear-gradient(135deg, #4B79A1, #283E51)",
+        // 雷雨：暗紫灰色調
+        Thunderstorm: "linear-gradient(135deg, #0F2027, #203A43, #2c5364)",
+        // 預設 (雪、霧等)：灰白漸層
+        Default: "linear-gradient(135deg, #3E5151, #DECBA4)"
+    };
+
+    const targetBg = bgConfigs[main] || bgConfigs.Default;
+    document.body.style.background = targetBg;
+    document.body.style.backgroundAttachment = "fixed";
+}
+
+function updateChart(forecastList) {
+    const ctx = document.getElementById('tempChart').getContext('2d');
+    const nextData = forecastList.slice(0, 8);
+    if (tempChart) tempChart.destroy();
+    tempChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: nextData.map(i => new Date(i.dt * 1000).getHours() + ":00"),
+            datasets: [{ data: nextData.map(i => i.main.temp), borderColor: '#4facfe', backgroundColor: 'rgba(79, 172, 254, 0.1)', fill: true, tension: 0.4 }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: { y: { ticks: { color: '#fff' }, grid: { color: 'rgba(255,255,255,0.1)' } }, x: { ticks: { color: '#fff' }, grid: { display: false } } }
+        }
+    });
+}
+
+function renderWeekly(list) {
+    const container = document.getElementById("weeklyForecast");
+    container.innerHTML = "";
+    const daily = {};
+    list.forEach(item => {
+        const date = new Date(item.dt * 1000).toLocaleDateString();
+        if (!daily[date] || item.pop > daily[date].pop) {
+            daily[date] = { max: item.main.temp_max, min: item.main.temp_min, icon: item.weather[0].icon, pop: item.pop, day: new Date(item.dt * 1000).toLocaleDateString('zh-TW', {weekday: 'short'}) };
+        }
+    });
+    Object.keys(daily).slice(1, 7).forEach(date => {
+        const d = daily[date];
+        const popPercent = Math.round(d.pop * 100);
+        container.innerHTML += `<div class="week-item"><span>${d.day}</span><img src="https://openweathermap.org/img/wn/${d.icon}.png" width="30"><span class="rain-pop">☔${popPercent}%</span><span>${Math.round(d.max)}° / ${Math.round(d.min)}°</span></div>`;
+    });
+}
+
+function updateMap(lat, lon) {
+    if (!map) {
+        map = L.map('map', { zoomControl: false }).setView([lat, lon], 10);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+    } else map.setView([lat, lon], 10);
+}
+
+function updateNews(city) {
+    document.getElementById("newsContainer").innerHTML = `<a href="https://news.google.com/search?q=${city}+新聞" target="_blank" class="news-link"><img src="https://images.unsplash.com/photo-1504711434969-e33886168f5c?q=80&w=400" class="news-img"><div class="news-overlay">查看 ${city} 即時焦點新聞...</div></a>`;
+}
+
+fetchAllData(25.0330, 121.5654, "台北市");
+</script>
+</body>
+</html>
